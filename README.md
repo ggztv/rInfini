@@ -1,2 +1,1 @@
-# rInfini
-An infinite version of r/place.
+use replit for this
