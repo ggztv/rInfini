@@ -1,64 +1,61 @@
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>r/Infini Multiplayer</title>
-<style>
-canvas { border:1px solid #000; display:block; margin:auto; }
-#palette { text-align:center; margin-top:5px; }
-.color { display:inline-block; width:30px; height:30px; margin:2px; border:1px solid #333; cursor:pointer; }
-</style>
-</head>
-<body>
-<canvas id="canvas" width="800" height="600"></canvas>
-<div id="palette"></div>
+import pygame
+import socket
+import threading
+import pickle
 
-<script>
-const PALETTE = [
-'#FFFFFF','#E4E4E4','#888888','#222222','#FFA7D1','#E50000',
-'#E59500','#A06A42','#E5D900','#94E044','#02BE01','#00D3DD',
-'#0083C7','#0000EA','#CF6EE4','#820080'
-];
+HOST = 'SERVER_IP_HERE'
+PORT = 5000
 
-let currentColor = PALETTE[1];
-let pixels = {};
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.connect((HOST, PORT))
 
-const ws = new WebSocket('ws://'+location.hostname+':8765');
-ws.onmessage = e => {
-    const data = JSON.parse(e.data);
-    Object.assign(pixels,data);
-    draw();
-};
+# Infinite grid storage
+pixels = {}  # {(x, y): color}
+lock = threading.Lock()
 
-function draw(){
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    for(let key in pixels){
-        const [x,y]=key.split(',').map(Number);
-        ctx.fillStyle = pixels[key];
-        ctx.fillRect(x*20, y*20, 20,20);
-    }
-}
+def recv_thread():
+    global pixels
+    while True:
+        try:
+            data = s.recv(4096)
+            if data:
+                x, y, color = pickle.loads(data)
+                with lock:
+                    pixels[(x, y)] = color
+        except:
+            break
 
-// Palette
-const paletteDiv = document.getElementById('palette');
-PALETTE.forEach(color=>{
-    const div = document.createElement('div');
-    div.className='color'; div.style.background=color;
-    div.onclick = ()=>{currentColor=color;}
-    paletteDiv.appendChild(div);
-});
+threading.Thread(target=recv_thread, daemon=True).start()
 
-// Place pixels
-canvas.addEventListener('click',e=>{
-    const rect = canvas.getBoundingClientRect();
-    const x = Math.floor((e.clientX-rect.left)/20);
-    const y = Math.floor((e.clientY-rect.top)/20);
-    pixels[`${x},${y}`] = currentColor;
-    ws.send(JSON.stringify({[`${x},${y}`]: currentColor}));
-    draw();
-});
-</script>
-</body>
-</html>
+# Pygame setup
+pygame.init()
+screen = pygame.display.set_mode((800, 600))
+clock = pygame.time.Clock()
+current_color = (255, 0, 0)
+BASE_PIXEL_SIZE = 20
+cam_x = cam_y = 0
+
+running = True
+while running:
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            mx, my = pygame.mouse.get_pos()
+            gx = (mx + cam_x) // BASE_PIXEL_SIZE
+            gy = (my + cam_y) // BASE_PIXEL_SIZE
+            data = pickle.dumps((gx, gy, current_color))
+            s.sendall(data)
+            with lock:
+                pixels[(gx, gy)] = current_color
+
+    screen.fill((255, 255, 255))
+    with lock:
+        for (gx, gy), color in pixels.items():
+            px = gx * BASE_PIXEL_SIZE - cam_x
+            py = gy * BASE_PIXEL_SIZE - cam_y
+            pygame.draw.rect(screen, color, (px, py, BASE_PIXEL_SIZE, BASE_PIXEL_SIZE))
+
+    pygame.display.flip()
+    clock.tick(60)
+
