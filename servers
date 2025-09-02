@@ -1,47 +1,25 @@
-import socket
-import threading
-import pickle
+import asyncio
+import websockets
+import json
 
-HOST = '0.0.0.0'  # Listen on all interfaces (Replit will provide a URL)
-PORT = 5555
+clients = set()
+pixels = {}  # {(x,y): color}
 
-clients = []
-pixels = {}  # Shared pixel data
+async def handler(ws):
+    clients.add(ws)
+    # Send existing pixels
+    await ws.send(json.dumps(pixels))
+    try:
+        async for message in ws:
+            data = json.loads(message)
+            pixels.update(data)
+            # Broadcast to all clients
+            websockets.broadcast(clients, json.dumps(data))
+    finally:
+        clients.remove(ws)
 
-def handle_client(conn, addr):
-    global pixels
-    print(f"[NEW CONNECTION] {addr} connected.")
-    # Send existing pixels to new client
-    conn.send(pickle.dumps(pixels))
-    
-    while True:
-        try:
-            data = conn.recv(4096)
-            if not data:
-                break
-            update = pickle.loads(data)  # Expecting {(x, y): color}
-            pixels.update(update)
-            broadcast(update)
-        except:
-            break
-    conn.close()
-    clients.remove(conn)
-    print(f"[DISCONNECT] {addr} disconnected.")
+async def main():
+    async with websockets.serve(handler, "0.0.0.0", 8765):
+        await asyncio.Future()  # run forever
 
-def broadcast(data):
-    for client in clients:
-        try:
-            client.send(pickle.dumps(data))
-        except:
-            clients.remove(client)
-
-server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server.bind((HOST, PORT))
-server.listen()
-print(f"[LISTENING] Server listening on {HOST}:{PORT}")
-
-while True:
-    conn, addr = server.accept()
-    clients.append(conn)
-    thread = threading.Thread(target=handle_client, args=(conn, addr))
-    thread.start()
+asyncio.run(main())
