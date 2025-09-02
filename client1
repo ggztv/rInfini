@@ -1,119 +1,64 @@
-import pygame
-import socket
-import threading
-import pickle
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>r/Infini Multiplayer</title>
+<style>
+canvas { border:1px solid #000; display:block; margin:auto; }
+#palette { text-align:center; margin-top:5px; }
+.color { display:inline-block; width:30px; height:30px; margin:2px; border:1px solid #333; cursor:pointer; }
+</style>
+</head>
+<body>
+<canvas id="canvas" width="800" height="600"></canvas>
+<div id="palette"></div>
 
-# Settings
-BASE_PIXEL_SIZE = 20
-MIN_ZOOM, MAX_ZOOM = 0.1, 10.0
-PALETTE = [
-    (255,255,255),(228,228,228),(136,136,136),(34,34,34),(255,167,209),(229,0,0),
-    (229,149,0),(160,106,66),(229,217,0),(148,224,68),(2,190,1),(0,211,221),
-    (0,131,199),(0,0,234),(207,110,228),(130,0,128)
-]
+<script>
+const PALETTE = [
+'#FFFFFF','#E4E4E4','#888888','#222222','#FFA7D1','#E50000',
+'#E59500','#A06A42','#E5D900','#94E044','#02BE01','#00D3DD',
+'#0083C7','#0000EA','#CF6EE4','#820080'
+];
 
-# Networking
-SERVER = "127.0.0.1"  # Replace with Replit URL or public IP
-PORT = 5555
-client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client_socket.connect((SERVER, PORT))
+let currentColor = PALETTE[1];
+let pixels = {};
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
 
-pixels = {}  # Local copy of pixels
+const ws = new WebSocket('ws://'+location.hostname+':8765');
+ws.onmessage = e => {
+    const data = JSON.parse(e.data);
+    Object.assign(pixels,data);
+    draw();
+};
 
-def receive_updates():
-    global pixels
-    while True:
-        try:
-            data = client_socket.recv(4096)
-            if data:
-                update = pickle.loads(data)
-                pixels.update(update)
-        except:
-            break
+function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    for(let key in pixels){
+        const [x,y]=key.split(',').map(Number);
+        ctx.fillStyle = pixels[key];
+        ctx.fillRect(x*20, y*20, 20,20);
+    }
+}
 
-threading.Thread(target=receive_updates, daemon=True).start()
+// Palette
+const paletteDiv = document.getElementById('palette');
+PALETTE.forEach(color=>{
+    const div = document.createElement('div');
+    div.className='color'; div.style.background=color;
+    div.onclick = ()=>{currentColor=color;}
+    paletteDiv.appendChild(div);
+});
 
-# Pygame setup
-pygame.init()
-screen = pygame.display.set_mode((800, 600), pygame.RESIZABLE)
-pygame.display.set_caption("r/Infini Multiplayer")
-clock = pygame.time.Clock()
-
-current_color = PALETTE[1]
-cam_x, cam_y = 0,0
-zoom = 1.0
-dragging = False
-drag_start = (0,0)
-cam_start = (0,0)
-space_held = False
-
-color_preview_rect = pygame.Rect(10,10,40,40)
-
-def draw_grid(width, height):
-    pixel_size = int(BASE_PIXEL_SIZE * zoom)
-    if pixel_size < 1: return
-    start_x = cam_x // pixel_size
-    start_y = cam_y // pixel_size
-    end_x = (cam_x + width) // pixel_size + 1
-    end_y = (cam_y + height) // pixel_size + 1
-
-    screen.fill((255,255,255))
-    for gx in range(start_x,end_x):
-        for gy in range(start_y,end_y):
-            if (gx,gy) in pixels:
-                color = pixels[(gx,gy)]
-                px = gx*pixel_size - cam_x
-                py = gy*pixel_size - cam_y
-                pygame.draw.rect(screen,color,(px,py,pixel_size,pixel_size))
-
-    if pixel_size >= 6:
-        for gx in range(start_x,end_x):
-            x = gx*pixel_size - cam_x
-            pygame.draw.line(screen,(220,220,220),(x,0),(x,height))
-        for gy in range(start_y,end_y):
-            y = gy*pixel_size - cam_y
-            pygame.draw.line(screen,(220,220,220),(0,y),(width,y))
-
-fullscreen = False
-while True:
-    width,height = screen.get_size()
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            pygame.quit(); exit()
-        if event.type == pygame.VIDEORESIZE:
-            screen = pygame.display.set_mode((event.w,event.h),pygame.RESIZABLE)
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_SPACE: space_held = True
-            if event.key == pygame.K_F11:
-                fullscreen = not fullscreen
-                screen = pygame.display.set_mode((0,0),pygame.FULLSCREEN) if fullscreen else pygame.display.set_mode((800,600),pygame.RESIZABLE)
-        if event.type == pygame.KEYUP:
-            if event.key == pygame.K_SPACE: space_held = False; dragging=False; pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_ARROW)
-        if event.type == pygame.MOUSEBUTTONDOWN:
-            mx,my = pygame.mouse.get_pos()
-            if event.button == 1:
-                if space_held: dragging=True; drag_start=(mx,my); cam_start=(cam_x,cam_y); pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
-                else:
-                    pixel_size=int(BASE_PIXEL_SIZE*zoom)
-                    gx=(mx+cam_x)//pixel_size
-                    gy=(my+cam_y)//pixel_size
-                    pixels[(gx,gy)] = current_color
-                    client_socket.send(pickle.dumps({(gx,gy): current_color}))
-            if event.button == 3:
-                pixel_size=int(BASE_PIXEL_SIZE*zoom)
-                gx=(mx+cam_x)//pixel_size
-                gy=(my+cam_y)//pixel_size
-                pixels.pop((gx,gy), None)
-                client_socket.send(pickle.dumps({(gx,gy): None}))
-            if event.button == 4: zoom*=1.1
-            if event.button == 5: zoom/=1.1
-        if event.type == pygame.MOUSEBUTTONUP:
-            if event.button==1: dragging=False; pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_ARROW)
-        if event.type == pygame.MOUSEMOTION:
-            mx,my = event.pos
-            if dragging: dx=mx-drag_start[0]; dy=my-drag_start[1]; cam_x=cam_start[0]-dx; cam_y=cam_start[1]-dy
-
-    draw_grid(width,height)
-    pygame.draw.rect(screen,current_color,color_preview_rect,border_radius=6)
-    pygame.display.flip()
-    clock.tick(60)
+// Place pixels
+canvas.addEventListener('click',e=>{
+    const rect = canvas.getBoundingClientRect();
+    const x = Math.floor((e.clientX-rect.left)/20);
+    const y = Math.floor((e.clientY-rect.top)/20);
+    pixels[`${x},${y}`] = currentColor;
+    ws.send(JSON.stringify({[`${x},${y}`]: currentColor}));
+    draw();
+});
+</script>
+</body>
+</html>
